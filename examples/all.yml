@@ -18,9 +18,9 @@ services:
       # - "21118:21118"    # Web client(hbbs)
       # - "21119:21119"    # Web client(hbbr)
     environment:
-      - CADDY_DOMAIN=rd.example.com   # 换成你的域名 → 域名 ACME 真证书。设为空(=CADDY_DOMAIN=)或整行注释掉 = 不写域名 → 自动 公网IP ACME / 内网自签
+      - CADDY_DOMAIN=rd.example.com   # 换成你的域名或真公网IP → 走 ACME 真证书。设为空(=CADDY_DOMAIN=)或整行注释掉 = 内网 IP 自签(直接可用)
       # - CADDY_ACME=0       # 强制只自签
-      # - CADDY_NOPROBE=1    # 关闭对外公网IP探测
+      # - CADDY_PROBE=1      # 主动探测对外公网IP并申证书(仅限确认可回连的 NAT 公网机;代理/NAT 后会探到错的出口IP)
       # - KEY_PUB=<id_ed25519.pub>    # 固定公钥(不给则首启自动生成)
       # - KEY_PRIV=<id_ed25519 私钥>  # 固定私钥(与公钥成对)
       # - RELAY=1.2.3.4               # 中继地址(逗号分隔)

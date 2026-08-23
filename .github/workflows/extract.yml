@@ -85,6 +85,10 @@ jobs:
             arch="$(basename "$d")"
             tar -czf "dist/rustdesk-bins-${VER}-${arch}.tar.gz" -C "$d" hbbs hbbr rustdesk-utils
           done
+          # Web 控制台静态资源(平台无关,一份;解到 /usr/share/rustdesk-server)
+          if [ -d "$SRC/web/usr" ]; then
+            tar -czf "dist/rustdesk-server-web-${VER}.tar.gz" -C "$SRC/web" usr
+          fi
           ls -la dist
 
       - name: 建 / 更新 Release（具体版本 tag + 完整 digest 溯源）
@@ -98,13 +102,15 @@ jobs:
           TAG="bins-$VER"
           NOTES="$(mktemp)"
           {
-            echo "官方 \`rustdesk/rustdesk-server-pro-s6:$VER\` 各架构【原版】二进制（hbbs / hbbr / rustdesk-utils）。"
+            echo "官方 \`rustdesk/rustdesk-server-pro-s6:$VER\` 各架构【原版】二进制（hbbs / hbbr / rustdesk-utils）+ Web 控制台静态资源。"
             [ "$WANT" = "latest" ] && echo "> 发布时 \`latest\` = \`$VER\`。"
             echo
             echo "index-digest: $DIG"
             echo
-            echo "多架构 index（\`$DIG\`）是内容寻址指纹——它一致即代表整包各架构逐一一致。"
-            echo "各架构 image digest 与每个二进制的 sha256 见下方 \`MANIFEST.txt\`："
+            echo "- \`rustdesk-bins-$VER-linux-<arch>.tar.gz\`：该架构的 hbbs/hbbr/rustdesk-utils（解压即用）。"
+            echo "- \`rustdesk-server-web-$VER.tar.gz\`：Web 控制台静态资源（各架构通用，\`tar xzf -C /\` 解到 \`/usr/share/rustdesk-server\`；单独部署 hbbs 时控制台需要它，否则 :21114 打开 404）。"
+            echo
+            echo "各架构 image digest、每个二进制 sha256、web 资源 content-sha256 见下方 \`MANIFEST.txt\`："
             echo
             echo '```'
             cat "official-bins/$VER/MANIFEST.txt"

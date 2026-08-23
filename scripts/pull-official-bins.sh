@@ -102,7 +102,6 @@ log ">> 架构: ${ARCHES}   输出: ${DEST}"
   echo "# 源镜像:       ${IMAGE}:${RESOLVED_VER}"
   [ "$VERSION" = latest ] && echo "# (提取时 latest = ${RESOLVED_VER})"
   echo "# index digest: ${INDEX_DIGEST}"
-  echo "# 提取方式:     crane export + tar 抠取(本机零污染)"
   echo
 } > "$MAN"
 
@@ -138,6 +137,23 @@ for A in $ARCHES; do
   echo >> "$MAN"
   rm -f "$TAR"
 done
+
+# ── Web 控制台静态资源(/usr/share/rustdesk-server)：各架构完全一致,只抠一份 ──
+FIRST=$(printf '%s\n' $ARCHES | head -1)
+WROOT="${DEST}/web"
+mkdir -p "$WROOT"
+log ""
+log "==== Web 静态资源(平台无关,取自 linux/${FIRST}) ===="
+crane export --platform "linux/${FIRST}" "${IMAGE}:${RESOLVED_VER}" - 2>/dev/null | tar -xf - -C "$WROOT" usr/share/rustdesk-server 2>/dev/null || true
+if [ -f "$WROOT/usr/share/rustdesk-server/static/index.html" ]; then
+  WSHA=$(cd "$WROOT" && find usr/share/rustdesk-server -type f | LC_ALL=C sort | xargs shasum -a256 | shasum -a256 | awk '{print $1}')
+  WSZ=$(du -sk "$WROOT/usr/share/rustdesk-server" | awk '{print $1}')
+  log "  web content-sha256: ${WSHA}  (~${WSZ} KB)"
+  { echo "## web-static (平台无关，解到 /usr/share/rustdesk-server)"; echo "#   content-sha256: ${WSHA}  (~${WSZ} KB)"; echo; } >> "$MAN"
+else
+  log "  ✗ web 资源抠取失败"
+  echo "# ✗ web-static 缺失" >> "$MAN"
+fi
 
 log ""
 log ">> 完成。版本=${RESOLVED_VER}  MANIFEST=${MAN}"

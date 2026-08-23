@@ -18,7 +18,7 @@ docker compose up -d
 # 默认账号 admin / test1234（首次登录请改）
 ```
 
-或纯 `docker run`（一体机，自动内网/公网/域名证书决策）：
+或纯 `docker run`（一体机，默认无域名→内网自签，`:21120` 直接可用）：
 
 ```bash
 docker run -d --name rustdesk --restart unless-stopped \
@@ -48,7 +48,7 @@ docker run -d --name rustdesk --restart unless-stopped \
 
 ## 完整 docker-compose.yml（列出全部环境变量）
 
-下面列出**全部支持的环境变量**——默认**整段都注释掉**（直接跑就行：无域名→自动 公网IP ACME / 内网自签，其余全用默认值）。要用哪项就取消注释哪项（给默认值没意义、还可能盖掉控制台里的配置）：
+下面列出**全部支持的环境变量**——默认**整段都注释掉**（直接跑就行：无域名→内网自签、`:21120` 直接可用，其余全用默认值）。要用哪项就取消注释哪项（给默认值没意义、还可能盖掉控制台里的配置）：
 
 ```yaml
 services:
@@ -68,14 +68,14 @@ services:
       - "21118:21118"                # Web client(hbbs)
       - "21119:21119"                # Web client(hbbr)
       - "21120:21120"                # 内嵌 Caddy HTTPS 反代
-    # 全部可选：默认整段注释掉——直接跑就是「无域名→自动 公网IP ACME/内网自签」+ 各设置用默认值。
+    # 全部可选：默认整段注释掉——直接跑就是「无域名→内网自签、:21120 直接可用」+ 各设置用默认值。
     # 要用就把 environment: 连同你要的项一起取消注释。hbbs 的 Pro 设置更建议在 web 控制台「设置」页配——
     # 走 env 会在每次启动种进设置库、可能盖掉你在控制台改的。
     # environment:
       # ── 内嵌 Caddy HTTPS 反代证书 ────────────────────────────────────────
-      # CADDY_DOMAIN: "rd.example.com"        # 有域名就取消注释并填你的域名 → 域名 ACME 真证书。不设(注释掉 / 设 "" 等价)= 不写域名 → 自动 公网IP ACME / 内网自签
+      # CADDY_DOMAIN: "rd.example.com"        # 填你的域名或真公网IP → 走 ACME 真证书。不设(注释掉 / 设 "" 等价)= 内网 IP 自签，:21120 直接可用
       # CADDY_ACME: "0"                       # 强制只自签(不走 ACME)
-      # CADDY_NOPROBE: "1"                    # 关闭「对外公网 IP 探测」
+      # CADDY_PROBE: "1"                      # 主动探测对外公网IP并申证书(仅限确认 80/443 可回连的 NAT 公网机如 Oracle；默认关。代理/NAT 后会探到错的出口IP)
       # ── ed25519 密钥：不写=首启自动生成到 /data/id_ed25519*；要固定/分体部署两端一致才填 ──
       # KEY_PUB: "<id_ed25519.pub 内容>"
       # KEY_PRIV: "<id_ed25519 私钥内容>"
@@ -118,13 +118,15 @@ services:
 
 按优先级**自动决策**：
 
-1. **有域名**（`CADDY_DOMAIN=rd.example.com`）→ 域名 ACME（Let's Encrypt）真证书（需 `80/443` 可达校验）。
-2. **无域名、探到公网 IP**（含 Oracle/AWS 这类 NAT 公网）→ 公网 IP ACME 真证书（LE 现支持 IP 证书）。
-3. **纯内网**（无公网 IP）→ 内网 IP 自签（内部 CA）。
+1. **`CADDY_DOMAIN` 设了域名/公网IP** → 该名字走 ACME（Let's Encrypt）真证书（需该名字 `80/443` 可回连本机校验）。
+2. **网卡本身就有公网 IP** → 该公网 IP 走 ACME。
+3. **其余**（纯内网 / NAT 后 / 代理后，即默认情况）→ 内网 IP 自签（内部 CA），`:21120` **直接可用**。
 
 ACME 签不下来一律**回落内部自签兜底**，保证 `:21120` 始终能用。证书存 `/data/caddy`。
 
-手动覆盖：`CADDY_ACME=0` 强制只自签；`CADDY_NOPROBE=1` 关闭对外公网 IP 探测。
+> ⚠️ 默认**不**主动探测"对外出口 IP"：代理 / NAT / 防火墙后探到的是**出口地址**、并非本容器能被回连的地址，拿它申证书必失败、还会把错的 IP 写进证书。**要公网证书就把 `CADDY_DOMAIN` 直接设成你的真域名或真公网 IP。** 真有 NAT 公网（如 Oracle）且确认 `80/443` 能回连本机，才用 `CADDY_PROBE=1` 开启自动探测。
+
+手动覆盖：`CADDY_ACME=0` 强制只自签；`CADDY_PROBE=1` 开启对外公网 IP 探测（仅限确认可回连的 NAT 公网机，慎用）。
 
 ---
 
@@ -132,9 +134,9 @@ ACME 签不下来一律**回落内部自签兜底**，保证 `:21120` 始终能�
 
 | 变量 | 说明 |
 |---|---|
-| `CADDY_DOMAIN` | 反代证书用的域名；不填=自动内网/公网 IP 决策 |
+| `CADDY_DOMAIN` | 反代证书用的域名或公网IP → 走 ACME 真证书；不填=内网 IP 自签 |
 | `CADDY_ACME` | `0`=强制只自签 |
-| `CADDY_NOPROBE` | `1`=关闭对外公网 IP 探测 |
+| `CADDY_PROBE` | `1`=主动探测对外公网IP并申证书（仅限确认 80/443 可回连的 NAT 公网机，如 Oracle；默认关） |
 | `KEY_PUB` / `KEY_PRIV` | 固定 ed25519 公私钥（不给则首启自动生成到 `/data/id_ed25519*`；分体部署两端须一致） |
 | `RELAY` | 中继服务器地址，逗号分隔 |
 | `ALWAYS_USE_RELAY` | `Y`=禁直连、强制走中继 |

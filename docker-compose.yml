@@ -5,7 +5,7 @@
 #   浏览器打开 https://<你的IP或域名>:21120  → Caddy 反代到 Web 控制台(默认 admin/test1234)
 #
 # 证书策略（由内嵌 Caddy 自动决策，见下方 CADDY_* 注释）：
-#   有域名 → 域名 ACME 真证书；无域名有公网IP → 公网IP ACME 真证书；纯内网 → 内网IP 自签。
+#   CADDY_DOMAIN 设域名/公网IP → 走 ACME 真证书；不设 → 内网IP 自签(:21120 直接可用)。
 #
 # 只想单独部署某个程序？见 examples/ 下：
 #   hbbs-only.yml   仅信令(经典单进程，直启无 s6)
@@ -32,11 +32,11 @@ services:
     # ── 环境变量（全部可选）──────────────────────────────────────────────
     # environment:
       # ==== Caddy HTTPS 反代（内嵌，监听 21120）证书自动决策 ====
-      #   优先级：① 域名 → 域名 ACME 真证书  ② 无域名探到公网IP → 公网IP ACME 真证书
-      #           ③ 纯内网 → 内网IP 自签(内部CA)。ACME 签不下来自动回落内部自签兜底。
-      # - CADDY_DOMAIN=rd.example.com   # 填域名 → 自动 ACME(Let's Encrypt) 真证书(需 80/443 可达校验)
+      #   CADDY_DOMAIN 设域名/公网IP → 走 ACME 真证书(回落自签)；不设 → 内网IP 自签(:21120 直接可用)。
+      #   默认不主动探"对外出口IP"(代理/NAT 后探到的是出口地址、非本容器可回连地址,申证书必失败)。
+      # - CADDY_DOMAIN=rd.example.com   # 填你的域名或真公网IP → ACME(Let's Encrypt) 真证书(需该名字 80/443 可回连本机校验)
       # - CADDY_ACME=0                  # 强制只自签(不去 ACME)
-      # - CADDY_NOPROBE=1              # 关掉「探测对外公网IP」(默认无域名且网卡无公网时会探一次)
+      # - CADDY_PROBE=1                 # 主动探测对外公网IP并申证书(仅限确认可回连的 NAT 公网机如 Oracle;慎用)
       # ==== 密钥（不给则首启自动生成到 /data/id_ed25519*）====
       # - KEY_PUB=<id_ed25519.pub 内容>
       # - KEY_PRIV=<id_ed25519 私钥内容>

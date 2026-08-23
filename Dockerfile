@@ -13,7 +13,7 @@
 # 底座：  lovechen/tinysys（glibc+openssl+zstd+ca+loader+s6+busybox·sh 的极简料场），最终 FROM scratch 单层。
 # Caddy： 官方 caddy 静态二进制，HTTPS :21120 反代 hbbs Web 控制台 :21114，证书策略见 caddy-run。
 # ─────────────────────────────────────────────────────────────────────────────
-ARG BASE=lovechen/tinysys:alpine-glibc-openssl-s6
+ARG BASE=lovechen/tinysys:scratch-glibc-openssl-s6
 ARG RUSTDESK_VER=latest
 
 # 静态 musl busybox（自包含，scratch 上也能跑）：s6 的 sh + coreutils

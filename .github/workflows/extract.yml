@@ -1,21 +1,27 @@
 name: extract-official-bins
 
 # 从官方镜像提取【各架构原版】hbbs/hbbr/rustdesk-utils，打包发到 GitHub Release。
-# 手动触发，可指定版本（latest 或如 1.1.14）。用 scripts/pull-official-bins.sh（crane 提取）。
+#   · 传 latest 会先解析成具体数字版本(比对 index digest)，Release 一律用具体版本 bins-<ver>
+#   · 若我们已有该版本的 Release 且 index digest 一致 → 直接跳过，不重抠(幂等)
+#   · Release 里详记 index digest + 各架构 image digest + 每个二进制 sha256
 on:
   workflow_dispatch:
     inputs:
       rustdesk_ver:
-        description: '官方 RustDesk Server Pro 版本 tag（latest 或如 1.1.14）'
+        description: '官方版本 tag（latest 或如 1.8.5；latest 会解析成具体版本）'
         required: false
         default: 'latest'
       arches:
         description: '架构列表（空格分隔）'
         required: false
         default: 'amd64 arm64 arm/v7'
+      force:
+        description: '即使已有且 digest 一致也强制重抠'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write            # 建 Release 需要
+  contents: write
 
 jobs:
   extract:
@@ -23,45 +29,89 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 提取各架构原版二进制
-        id: pull
+      - name: 登录 Docker Hub（认证拉取，避免匿名限流）
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 解析版本（latest → 具体版本 + index digest）
+        id: resolve
         run: |
-          VER="${{ github.event.inputs.rustdesk_ver || 'latest' }}"
-          ARCHES="${{ github.event.inputs.arches || 'amd64 arm64 arm/v7' }}"
           chmod +x scripts/pull-official-bins.sh
-          ./scripts/pull-official-bins.sh -v "$VER" -a "$ARCHES" -o official-bins
+          OUT=$(DOCKER_CFG=$HOME/.docker ./scripts/pull-official-bins.sh -v "${{ github.event.inputs.rustdesk_ver || 'latest' }}" --resolve-only 2>/dev/null | tail -1)
+          VER=$(echo "$OUT" | awk '{print $1}')
+          DIG=$(echo "$OUT" | awk '{print $2}')
+          [ -z "$VER" ] && { echo "解析失败"; exit 1; }
           echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "dig=$DIG" >> "$GITHUB_OUTPUT"
+          echo "解析结果：$VER  index=$DIG"
 
-      - name: 按架构打包
-        id: pack
-        run: |
-          VER="${{ steps.pull.outputs.ver }}"
-          SRC="official-bins/$VER"
-          mkdir -p dist
-          cp "$SRC/MANIFEST.txt" dist/
-          for d in "$SRC"/linux-*; do
-            [ -d "$d" ] || continue
-            arch="$(basename "$d")"          # linux-amd64 ...
-            tar -czf "dist/rustdesk-bins-${VER}-${arch}.tar.gz" -C "$d" hbbs hbbr rustdesk-utils
-            echo "打包 $arch: $(ls -la dist/rustdesk-bins-${VER}-${arch}.tar.gz | awk '{print $5}') bytes"
-          done
-          ls -la dist
-
-      - name: 建 / 更新 Release
+      - name: 幂等检查（我们的 Release 已有且 index digest 一致 → 跳过）
+        id: check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VER="${{ steps.pull.outputs.ver }}"
-          TAG="bins-${VER}"
-          TITLE="官方原版二进制 ${VER}（hbbs / hbbr / rustdesk-utils，各架构）"
-          NOTES=$(cat <<EOF
-          从官方 \`rustdesk/rustdesk-server-pro-s6:${VER}\` 提取的【原版】二进制，各架构一份。
-          校验见附件 \`MANIFEST.txt\`（每文件 sha256 + 源镜像 per-arch digest）。
-          由 \`extract-official-bins\` workflow 自动生成。
-          EOF
-          )
-          # 已存在则先删（滚动更新 latest 这类 tag）
+          VER='${{ steps.resolve.outputs.ver }}'
+          DIG='${{ steps.resolve.outputs.dig }}'
+          TAG="bins-$VER"
+          existing=$(gh release view "$TAG" --json body -q .body 2>/dev/null | grep -oE 'index-digest: sha256:[0-9a-f]{64}' | head -1 | awk '{print $2}' || true)
+          if [ "${{ github.event.inputs.force }}" != "true" ] && [ -n "$existing" ] && [ "$existing" = "$DIG" ]; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "### ⏭️ 已存在 \`$TAG\` 且 index digest 一致，跳过重抠" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`$DIG\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+            if [ -n "$existing" ]; then echo "已有 $TAG 但 digest 变化（$existing → $DIG），重抠"; else echo "$TAG 不存在，开抠"; fi
+          fi
+
+      - name: 提取各架构原版二进制
+        if: steps.check.outputs.skip != '1'
+        run: |
+          DOCKER_CFG=$HOME/.docker ./scripts/pull-official-bins.sh \
+            -v "${{ steps.resolve.outputs.ver }}" \
+            -a "${{ github.event.inputs.arches || 'amd64 arm64 arm/v7' }}" \
+            -o official-bins
+
+      - name: 按架构打包
+        if: steps.check.outputs.skip != '1'
+        run: |
+          VER='${{ steps.resolve.outputs.ver }}'
+          SRC="official-bins/$VER"
+          mkdir -p dist
+          cp "$SRC/MANIFEST.txt" "$SRC/INDEX_DIGEST" dist/
+          for d in "$SRC"/linux-*; do
+            [ -d "$d" ] || continue
+            arch="$(basename "$d")"
+            tar -czf "dist/rustdesk-bins-${VER}-${arch}.tar.gz" -C "$d" hbbs hbbr rustdesk-utils
+          done
+          ls -la dist
+
+      - name: 建 / 更新 Release（具体版本 tag + 完整 digest 溯源）
+        if: steps.check.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER='${{ steps.resolve.outputs.ver }}'
+          DIG='${{ steps.resolve.outputs.dig }}'
+          WANT='${{ github.event.inputs.rustdesk_ver || 'latest' }}'
+          TAG="bins-$VER"
+          NOTES="$(mktemp)"
+          {
+            echo "官方 \`rustdesk/rustdesk-server-pro-s6:$VER\` 各架构【原版】二进制（hbbs / hbbr / rustdesk-utils）。"
+            [ "$WANT" = "latest" ] && echo "> 发布时 \`latest\` = \`$VER\`。"
+            echo
+            echo "index-digest: $DIG"
+            echo
+            echo "多架构 index（\`$DIG\`）是内容寻址指纹——它一致即代表整包各架构逐一一致。"
+            echo "各架构 image digest 与每个二进制的 sha256 见下方 \`MANIFEST.txt\`："
+            echo
+            echo '```'
+            cat "official-bins/$VER/MANIFEST.txt"
+            echo '```'
+          } > "$NOTES"
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$TAG" dist/* --title "$TITLE" --notes "$NOTES"
-          echo "### ✅ Release \`$TAG\` 已发布" >> "$GITHUB_STEP_SUMMARY"
+          gh release create "$TAG" dist/* --title "官方原版二进制 $VER" --notes-file "$NOTES"
+          echo "### ✅ Release \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- index-digest: \`$DIG\`" >> "$GITHUB_STEP_SUMMARY"
           ls -1 dist | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"

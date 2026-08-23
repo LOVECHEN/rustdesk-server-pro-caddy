@@ -90,20 +90,25 @@ ACME 签不下来一律**回落内部自签兜底**，保证 `:21120` 始终能�
 
 ## 构建 / CI
 
-- **`build-image`**（`.github/workflows/image.yml`）：多架构构建并推送到 Docker Hub。需在仓库 Secrets 配 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`。可手动指定官方版本。
-- **`extract-official-bins`**（`.github/workflows/extract.yml`）：从官方镜像提取各架构**原版** hbbs/hbbr/rustdesk-utils，打包发到 GitHub Release（附 `MANIFEST.txt` 校验）。
+两个 workflow 都做了**版本解析 + digest 溯源 + 幂等**：
 
-本地提取二进制：
+- **`build-image`**（`.github/workflows/image.yml`）：多架构构建并推送到 Docker Hub。需在仓库 Secrets 配 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`。传 `latest` 会先解析成具体版本(比对官方 index digest)，镜像同时打 `:latest` 和 `:<具体版本>`，并带 `rustdesk.source.digest` label 溯源；`:<具体版本>` 已存在则跳过（`force` 可覆盖）。
+- **`extract-official-bins`**（`.github/workflows/extract.yml`）：从官方镜像提取各架构**原版** hbbs/hbbr/rustdesk-utils，发到 GitHub Release `bins-<具体版本>`。Release 里详记 **index digest + 各架构 image digest + 每个二进制 sha256**（见 `MANIFEST.txt`）；若已有该版本 Release 且 index digest 一致则跳过重抠。
+
+**版本解析**：`latest` 是多架构 manifest list，其 index digest 与某个数字 tag 相同即代表二者整包一致——workflow 据此把 `latest` 落到具体版本(如 `1.8.5`)，产物一律用具体版本、不留会被覆盖的移动靶。
+
+本地提取二进制（`latest` 同样会解析成具体版本）：
 
 ```bash
 ./scripts/pull-official-bins.sh -v latest -o official-bins
+# 只解析不抠： ./scripts/pull-official-bins.sh -v latest --resolve-only   # 打印「<版本> <index-digest>」
 ```
 
-（crane 跑在 Docker 里，本机不装任何工具链。）
+（crane 跑在 Docker 里，本机不装任何工具链。CI 里传 `DOCKER_CFG=$HOME/.docker` 让 crane 用登录态、避免匿名限流。）
 
 本地构建镜像：
 
 ```bash
 docker buildx build --platform linux/amd64 -t rustdesk-server-pro-caddy .
-# 指定官方版本： --build-arg RUSTDESK_VER=1.1.14
+# 指定官方版本： --build-arg RUSTDESK_VER=1.8.5
 ```

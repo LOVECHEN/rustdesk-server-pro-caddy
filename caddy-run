@@ -1,0 +1,52 @@
+#!/command/with-contenv sh
+# Caddy 反代：HTTPS :21120 → hbbs 的 :21114（Web 控制台）。s6 监管。listen 一律 bind 全网卡。
+# 证书自动决策（优先级）：
+#   1) CADDY_DOMAIN=域名        → 域名 ACME(Let's Encrypt) 真证书
+#   2) 没域名、探到公网 IP(含 NAT/Oracle) → 公网 IP ACME 真证书（LE 现支持 IP 证书）
+#   3) 没公网 IP(纯内网)        → 内网 IP 自签(内部 CA)
+#   ACME 签不下来一律回落内部自签兜底（issuers acme internal），保证始终能用。
+# 手动兜底：CADDY_DOMAIN 强指名字；CADDY_ACME=0 强制只自签；CADDY_NOPROBE=1 关外部公网探测。
+mkdir -p /etc/caddy /data/caddy
+
+# 网卡 IPv4：分私网段 / 公网段
+_all4=$(ip -4 -o addr 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -vE '^127\.')
+lan_ips=$(printf '%s\n' $_all4 | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)')
+nic_pub=$(printf '%s\n' $_all4 | grep -vE '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)')
+
+# 对外公网 IP（NAT 场景，如 Oracle：网卡只有私网、但有个 NAT 公网）—— http 短超时查外部
+ext_pub=""
+if [ -z "${CADDY_NOPROBE:-}" ] && [ -z "$nic_pub" ]; then
+  for u in http://checkip.amazonaws.com http://api.ipify.org http://ifconfig.me/ip; do
+    ext_pub=$(wget -qO- -T 4 "$u" 2>/dev/null | tr -d ' \r\n' | grep -oE '^[0-9.]+$')
+    [ -n "$ext_pub" ] && break
+  done
+fi
+pub_ip=$(printf '%s\n%s\n' "$nic_pub" "$ext_pub" | grep -E '^[0-9.]+$' | head -1)
+
+# 按优先级定 地址集(空格分隔) 与 签发器块
+if [ -n "${CADDY_DOMAIN:-}" ]; then
+  ADDRS="${CADDY_DOMAIN}"
+  TLSBLK=$([ "${CADDY_ACME:-1}" = "0" ] && printf '\ttls internal' || printf '\ttls {\n\t\tissuers acme internal\n\t}')
+elif [ -n "$pub_ip" ] && [ "${CADDY_ACME:-1}" != "0" ]; then
+  ADDRS="$pub_ip"                                             # 公网 IP → ACME 真证书(回落自签)
+  TLSBLK=$(printf '\ttls {\n\t\tissuers acme internal\n\t}')
+else
+  ADDRS=$(printf '%s\n127.0.0.1\nlocalhost\n' $lan_ips | grep . | awk '!seen[$0]++' | paste -sd' ' -)  # 内网IP+127.0.0.1+localhost
+  [ -z "$ADDRS" ] && ADDRS=localhost
+  TLSBLK=$(printf '\ttls internal')                           # 纯内网 → 自签
+fi
+
+# ★ 每个地址都带 :21120（否则 :21120 只贴最后一个）；DEFSNI=第一个名字(无 SNI 的 IP 访问用它)
+SITE=$(printf '%s\n' $ADDRS | sed 's/$/:21120/' | paste -sd' ' -)
+DEFSNI=$(printf '%s\n' $ADDRS | head -1)
+
+{
+  printf '{\n\tadmin off\n\tstorage file_system /data/caddy\n\tdefault_sni %s\n}\n' "$DEFSNI"
+  printf '%s {\n' "$SITE"
+  printf '\tbind 0.0.0.0 [::]\n'
+  printf '%s\n' "$TLSBLK"
+  printf '\treverse_proxy 127.0.0.1:21114\n}\n'
+} > /etc/caddy/Caddyfile
+
+echo "[caddy-run] site=${SITE}  default_sni=${DEFSNI}" >&2
+exec caddy run --config /etc/caddy/Caddyfile

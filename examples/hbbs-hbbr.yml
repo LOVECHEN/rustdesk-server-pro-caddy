@@ -1,0 +1,19 @@
+# 信令+中继（无 Caddy）—— command=hbbs hbbr → 多程序，s6 监管、互相自愈。
+#   等价官方 s6 版 rustdesk-server-pro-s6 的默认部署（不带 HTTPS 反代）。
+services:
+  rustdesk-server:
+    container_name: rustdesk-server
+    hostname: rustdesk-server
+    image: lovechen/rustdesk-server-pro-caddy:latest
+    command: ["hbbs", "hbbr"]
+    volumes:
+      - ./data:/data
+    ports:
+      - "21114:21114"      # Web 控制台(Pro)
+      - "21115:21115"
+      - "21116:21116"
+      - "21116:21116/udp"
+      - "21117:21117"      # 中继
+      # - "21118:21118"
+      # - "21119:21119"
+    restart: unless-stopped

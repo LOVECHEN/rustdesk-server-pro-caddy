@@ -1,0 +1,18 @@
+# 仅中继 hbbr —— 分体部署：command=hbbr → 直接 exec，PID1 就是 hbbr，【无 s6、无常驻 shell】。
+#   把中继单独放到带宽好/公网直连的机器上，hbbs 在别处；两者用【同一对 id_ed25519 密钥】。
+services:
+  hbbr:
+    container_name: rustdesk-hbbr
+    hostname: rustdesk-hbbr
+    image: lovechen/rustdesk-server-pro-caddy:latest
+    command: ["hbbr"]
+    volumes:
+      - ./data:/data       # 放与 hbbs 相同的 id_ed25519 / id_ed25519.pub（分体必须密钥一致）
+    ports:
+      - "21117:21117"      # 中继
+      # - "21119:21119"    # Web client(hbbr)
+    # environment:
+      # - KEY_PUB=<与 hbbs 相同的 id_ed25519.pub>
+      # - KEY_PRIV=<与 hbbs 相同的 id_ed25519 私钥>
+      # - ENCRYPTED_ONLY=1
+    restart: unless-stopped

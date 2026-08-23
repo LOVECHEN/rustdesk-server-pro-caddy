@@ -1,0 +1,67 @@
+name: extract-official-bins
+
+# 从官方镜像提取【各架构原版】hbbs/hbbr/rustdesk-utils，打包发到 GitHub Release。
+# 手动触发，可指定版本（latest 或如 1.1.14）。用 scripts/pull-official-bins.sh（crane 提取）。
+on:
+  workflow_dispatch:
+    inputs:
+      rustdesk_ver:
+        description: '官方 RustDesk Server Pro 版本 tag（latest 或如 1.1.14）'
+        required: false
+        default: 'latest'
+      arches:
+        description: '架构列表（空格分隔）'
+        required: false
+        default: 'amd64 arm64 arm/v7'
+
+permissions:
+  contents: write            # 建 Release 需要
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 提取各架构原版二进制
+        id: pull
+        run: |
+          VER="${{ github.event.inputs.rustdesk_ver || 'latest' }}"
+          ARCHES="${{ github.event.inputs.arches || 'amd64 arm64 arm/v7' }}"
+          chmod +x scripts/pull-official-bins.sh
+          ./scripts/pull-official-bins.sh -v "$VER" -a "$ARCHES" -o official-bins
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: 按架构打包
+        id: pack
+        run: |
+          VER="${{ steps.pull.outputs.ver }}"
+          SRC="official-bins/$VER"
+          mkdir -p dist
+          cp "$SRC/MANIFEST.txt" dist/
+          for d in "$SRC"/linux-*; do
+            [ -d "$d" ] || continue
+            arch="$(basename "$d")"          # linux-amd64 ...
+            tar -czf "dist/rustdesk-bins-${VER}-${arch}.tar.gz" -C "$d" hbbs hbbr rustdesk-utils
+            echo "打包 $arch: $(ls -la dist/rustdesk-bins-${VER}-${arch}.tar.gz | awk '{print $5}') bytes"
+          done
+          ls -la dist
+
+      - name: 建 / 更新 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${{ steps.pull.outputs.ver }}"
+          TAG="bins-${VER}"
+          TITLE="官方原版二进制 ${VER}（hbbs / hbbr / rustdesk-utils，各架构）"
+          NOTES=$(cat <<EOF
+          从官方 \`rustdesk/rustdesk-server-pro-s6:${VER}\` 提取的【原版】二进制，各架构一份。
+          校验见附件 \`MANIFEST.txt\`（每文件 sha256 + 源镜像 per-arch digest）。
+          由 \`extract-official-bins\` workflow 自动生成。
+          EOF
+          )
+          # 已存在则先删（滚动更新 latest 这类 tag）
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" dist/* --title "$TITLE" --notes "$NOTES"
+          echo "### ✅ Release \`$TAG\` 已发布" >> "$GITHUB_STEP_SUMMARY"
+          ls -1 dist | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"

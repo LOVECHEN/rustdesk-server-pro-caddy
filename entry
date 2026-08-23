@@ -1,0 +1,83 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# 多模式 entrypoint：由容器 command 决定跑哪几个程序，并决定是否上 s6。
+#
+#   command 可写：hbbs / hbbr / caddy / all（默认）的任意组合（空格分隔）
+#     · all                = hbbs hbbr caddy
+#     · 单个程序(hbbs|hbbr) → 直接 exec，PID1 就是它本身，【无 s6、无常驻 shell】
+#     · 多个程序           → 裁剪 s6 服务树只留请求的，交 /init 监管(自愈)
+#     · caddy 不允许独立启动，必须与 hbbs 同启（caddy 反代 hbbs 的 :21114）
+#   透传：command 若不是 hbbs/hbbr/caddy/all（如 rustdesk-utils、/bin/sh、绝对路径）
+#         → 原样 exec，不介入（方便 `docker run ... rustdesk-utils genkeypair` 等）。
+#
+#   密钥：KEY_PUB/KEY_PRIV 或 docker secret(key_pub/key_priv) → /data/id_ed25519*，
+#         单程序模式在此内联处理；多程序模式交给 s6 的 key-secret oneshot。
+# ─────────────────────────────────────────────────────────────────────────────
+S=/etc/s6-overlay/s6-rc.d
+
+# 无参 = all
+[ $# -eq 0 ] && set -- all
+case "$1" in all) set -- hbbs hbbr caddy ;; esac
+
+# 非受管命令 → 原样透传 exec
+case "$1" in
+  hbbs|hbbr|caddy) : ;;
+  *) exec "$@" ;;
+esac
+
+want_hbbs= want_hbbr= want_caddy= n=0
+for p in "$@"; do
+  case "$p" in
+    hbbs)  [ -z "$want_hbbs" ]  && { want_hbbs=1;  n=$((n+1)); } ;;
+    hbbr)  [ -z "$want_hbbr" ]  && { want_hbbr=1;  n=$((n+1)); } ;;
+    caddy) [ -z "$want_caddy" ] && { want_caddy=1; n=$((n+1)); } ;;
+    *) echo "[entry] 未知程序 '$p'（可选：hbbs / hbbr / caddy / all）" >&2; exit 64 ;;
+  esac
+done
+
+# caddy 不能独立启动
+if [ -n "$want_caddy" ] && [ -z "$want_hbbs" ]; then
+  echo "[entry] caddy 不能独立启动，必须与 hbbs 同启（如 'hbbs caddy' 或 'all'）" >&2
+  exit 64
+fi
+
+# 密钥准备：env/secret → /data/id_ed25519*，校验成对与有效性（单程序模式用）
+keyprep() {
+  mkdir -p /data
+  [ ! -f /data/id_ed25519.pub ] && [ -r /run/secrets/key_pub ]  && cp /run/secrets/key_pub  /data/id_ed25519.pub
+  [ ! -f /data/id_ed25519 ]     && [ -r /run/secrets/key_priv ] && cp /run/secrets/key_priv /data/id_ed25519
+  [ ! -f /data/id_ed25519.pub ] && [ -n "$KEY_PUB" ]  && printf '%s' "$KEY_PUB"  > /data/id_ed25519.pub
+  [ ! -f /data/id_ed25519 ]     && [ -n "$KEY_PRIV" ] && printf '%s' "$KEY_PRIV" > /data/id_ed25519
+  if { [ -f /data/id_ed25519.pub ] && [ ! -f /data/id_ed25519 ]; } \
+  || { [ ! -f /data/id_ed25519.pub ] && [ -f /data/id_ed25519 ]; }; then
+    echo "[entry] 必须同时提供公钥和私钥（KEY_PUB + KEY_PRIV）" >&2; exit 1
+  fi
+  if [ -f /data/id_ed25519.pub ] && [ -f /data/id_ed25519 ]; then
+    chmod 0600 /data/id_ed25519 /data/id_ed25519.pub 2>/dev/null
+    /usr/bin/rustdesk-utils validatekeypair "$(cat /data/id_ed25519.pub)" "$(cat /data/id_ed25519)" \
+      || { echo "[entry] 密钥对校验失败（KEY_PUB/KEY_PRIV 不匹配）" >&2; exit 1; }
+  fi
+}
+
+# ── 单程序：直接 exec，无 s6、无常驻 shell（PID1 = hbbs/hbbr 本身）──
+if [ "$n" -eq 1 ]; then
+  keyprep
+  cd /data
+  echo "[entry] 单程序直启（无 s6）：$*" >&2
+  [ -n "$want_hbbs" ] && exec /usr/bin/hbbs
+  [ -n "$want_hbbr" ] && exec /usr/bin/hbbr
+fi
+
+# ── 多程序：裁剪 s6 user bundle 只留请求的服务，交 /init 监管 ──
+# ★ hbbs 官方 dependencies=「key-secret + hbbr」，硬依赖会把 hbbr 一起拽起来；
+#   故按请求集归一化 hbbs 依赖：key-secret 恒需，hbbr 仅在被请求时才保留。
+if [ -n "$want_hbbs" ]; then
+  { echo key-secret; [ -n "$want_hbbr" ] && echo hbbr; } > "$S/hbbs/dependencies"
+fi
+rm -f "$S"/user/contents.d/* 2>/dev/null
+{ [ -n "$want_hbbs" ] || [ -n "$want_hbbr" ]; } && : > "$S/user/contents.d/key-secret"
+[ -n "$want_hbbr" ]  && : > "$S/user/contents.d/hbbr"
+[ -n "$want_hbbs" ]  && : > "$S/user/contents.d/hbbs"
+[ -n "$want_caddy" ] && : > "$S/user/contents.d/caddy"
+echo "[entry] s6 监管启动：$*" >&2
+exec /init

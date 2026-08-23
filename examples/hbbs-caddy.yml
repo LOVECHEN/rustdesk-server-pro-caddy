@@ -1,0 +1,20 @@
+# 信令+Caddy（无中继）—— command=hbbs caddy → 多程序，s6 监管。
+#   适合：中继放别处、这台只跑信令 + 给 Web 控制台套 HTTPS。caddy 不能独立、必须随 hbbs。
+services:
+  rustdesk-server:
+    container_name: rustdesk-server
+    hostname: rustdesk-server
+    image: lovechen/rustdesk-server-pro-caddy:latest
+    command: ["hbbs", "caddy"]
+    volumes:
+      - ./data:/data       # 含 caddy 证书目录 /data/caddy
+    ports:
+      - "21114:21114"      # Web 控制台(Pro)——也可不映射、只对外开 21120
+      - "21115:21115"
+      - "21116:21116"
+      - "21116:21116/udp"
+      - "21120:21120"      # ★ Caddy HTTPS 反代 → Web 控制台
+    environment:
+      - CADDY_DOMAIN=rd.example.com   # 换成你的域名或真公网IP → 走 ACME 真证书。设为空(=CADDY_DOMAIN=)或整行注释掉 = 内网 IP 自签(直接可用)
+      # - RELAY=1.2.3.4               # 中继地址(指向你的 hbbr 机器)
+    restart: unless-stopped

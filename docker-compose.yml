@@ -1,0 +1,50 @@
+# rustdesk-server-pro-caddy —— 默认【一体机】：hbbs + hbbr + Caddy(HTTPS 反代) 一起跑，s6 监管、互相自愈。
+#
+# 快速开始：
+#   docker compose up -d
+#   浏览器打开 https://<你的IP或域名>:21120  → Caddy 反代到 Web 控制台(默认 admin/test1234)
+#
+# 证书策略（由内嵌 Caddy 自动决策，见下方 CADDY_* 注释）：
+#   CADDY_DOMAIN 设域名/公网IP → 走 ACME 真证书；不设 → 内网IP 自签(:21120 直接可用)。
+#
+# 只想单独部署某个程序？见 examples/ 下：
+#   hbbs-only.yml   仅信令(经典单进程，直启无 s6)
+#   hbbr-only.yml   仅中继(分体部署，直启无 s6)
+#   hbbs-hbbr.yml   信令+中继(无 Caddy)
+#   hbbs-caddy.yml  信令+Caddy(无中继)
+services:
+  rustdesk-server:
+    container_name: rustdesk-server
+    hostname: rustdesk-server
+    image: lovechen/rustdesk-server-pro-caddy:latest
+    command: ["all"]                 # all = hbbs hbbr caddy；也可写 "hbbs" / "hbbr" / "hbbs caddy" 等
+    volumes:
+      - ./data:/data                 # 数据目录：db、id_ed25519 密钥、caddy 证书都在这
+    ports:
+      - "21114:21114"                # Web 控制台(Pro)
+      - "21115:21115"                # NAT type test
+      - "21116:21116"                # TCP 打洞/连接
+      - "21116:21116/udp"            # ID 注册/心跳
+      - "21117:21117"                # 中继(hbbr)
+      - "21120:21120"                # ★ 内嵌 Caddy HTTPS 反代 → Web 控制台
+      # - "21118:21118"              # Web client(hbbs)
+      # - "21119:21119"              # Web client(hbbr)
+    # ── 环境变量（全部可选）──────────────────────────────────────────────
+    # environment:
+      # ==== Caddy HTTPS 反代（内嵌，监听 21120）证书自动决策 ====
+      #   CADDY_DOMAIN 设域名/公网IP → 走 ACME 真证书(回落自签)；不设 → 内网IP 自签(:21120 直接可用)。
+      #   默认不主动探"对外出口IP"(代理/NAT 后探到的是出口地址、非本容器可回连地址,申证书必失败)。
+      # - CADDY_DOMAIN=rd.example.com   # 填你的域名或真公网IP → ACME(Let's Encrypt) 真证书(需该名字 80/443 可回连本机校验)
+      # - CADDY_ACME=0                  # 强制只自签(不去 ACME)
+      # - CADDY_PROBE=1                 # 主动探测对外公网IP并申证书(仅限确认可回连的 NAT 公网机如 Oracle;慎用)
+      # ==== 密钥（不给则首启自动生成到 /data/id_ed25519*）====
+      # - KEY_PUB=<id_ed25519.pub 内容>
+      # - KEY_PRIV=<id_ed25519 私钥内容>
+      # ==== 中继 / 日志 / 访问控制（hbbs 认这些 env）====
+      # - RELAY=1.2.3.4,relay2.example.com   # 中继服务器地址(逗号分隔)
+      # - ALWAYS_USE_RELAY=N                 # Y=禁直连、强制走中继
+      # - RUST_LOG=info                      # error/warn/info/debug/trace
+      # - ENCRYPTED_ONLY=1                   # 1=只收加密连接
+      # - ADMIN_NAME=admin                   # 默认管理员用户名
+      # - ACCESS_REQUIRE_LOGIN=Y             # 访问需登录
+    restart: unless-stopped

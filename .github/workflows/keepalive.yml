@@ -1,0 +1,33 @@
+name: keepalive
+
+# 防止 GitHub 在 repo 连续 60 天无提交后自动停用 schedule 定时任务。
+# 每周检查一次；仅当「上次提交 ≥ 50 天前」才推一个空提交重置 60 天计时器
+# （因此一年只多约 7 个空提交，而不是每次都提交）。空提交不改文件 → 不会触发 image.yml。
+on:
+  schedule:
+    - cron: '23 3 * * 1'     # 每周一 03:23（频次足够密，不怕 GitHub 偶尔跳过定时）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 临近 60 天才推空提交
+        run: |
+          AGE=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "上次提交在 ${AGE} 天前"
+          if [ "$AGE" -ge 50 ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "chore: keepalive（保持定时任务不被 60 天停用）"
+            git push
+            echo "已推 keepalive 空提交，60 天计时器已重置" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "未满 50 天，跳过（离 60 天停用还早）" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,0 +1,5 @@
+data/
+official-bins/
+dist/
+*.tar.gz
+.DS_Store

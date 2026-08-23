@@ -1,0 +1,105 @@
+name: build-image
+
+# 多架构构建 rustdesk-server-pro-caddy 并推送到 Docker Hub。
+#   · 传 latest 会先解析成具体数字版本(比对 index digest)，镜像同时打 :latest 和 :<具体版本>
+#   · 镜像带 label rustdesk.source.digest=<官方 index digest> 作溯源
+#   · 若 :<具体版本> 已存在(且非 force) → 跳过重构
+# 需在仓库 Settings → Secrets 配：DOCKERHUB_USERNAME / DOCKERHUB_TOKEN。
+on:
+  schedule:
+    - cron: '17 */4 * * *'    # 每 4 小时查一次官方新版本；无变化则幂等跳过(公开 repo 免费)
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'entry'
+      - 'caddy-run'
+      - '.github/workflows/image.yml'
+  workflow_dispatch:
+    inputs:
+      rustdesk_ver:
+        description: '官方版本 tag（latest 或如 1.8.5；latest 会解析成具体版本）'
+        required: false
+        default: 'latest'
+      platforms:
+        description: '目标架构'
+        required: false
+        default: 'linux/amd64,linux/arm64,linux/arm/v7'
+      force:
+        description: '即使 :<版本> 已存在也强制重构'
+        type: boolean
+        default: false
+
+env:
+  REPO: lovechen/rustdesk-server-pro-caddy
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 检查/读取一律匿名（读官方公开镜像 + 查自己的公开 tag，都不需要账号；省配额、少留痕）
+      - name: 解析版本（latest → 具体版本 + index digest，匿名）
+        id: resolve
+        run: |
+          chmod +x scripts/pull-official-bins.sh
+          OUT=$(./scripts/pull-official-bins.sh -v "${{ github.event.inputs.rustdesk_ver || 'latest' }}" --resolve-only 2>/dev/null | tail -1)
+          VER=$(echo "$OUT" | awk '{print $1}')
+          DIG=$(echo "$OUT" | awk '{print $2}')
+          [ -z "$VER" ] && { echo "解析失败"; exit 1; }
+          PLAT="${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64,linux/arm/v7' }}"
+          echo "ver=$VER"   >> "$GITHUB_OUTPUT"
+          echo "dig=$DIG"   >> "$GITHUB_OUTPUT"
+          echo "plat=$PLAT" >> "$GITHUB_OUTPUT"
+          echo "tags=${REPO}:latest,${REPO}:${VER}" >> "$GITHUB_OUTPUT"
+          echo "解析结果：$VER  index=$DIG  架构=$PLAT"
+
+      - name: 幂等检查（:<版本> 已存在且非 force → 跳过，匿名查公开 tag）
+        id: check
+        run: |
+          VER='${{ steps.resolve.outputs.ver }}'
+          if [ "${{ github.event.inputs.force }}" != "true" ] && docker buildx imagetools inspect "${REPO}:${VER}" >/dev/null 2>&1; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "### ⏭️ \`${REPO}:${VER}\` 已存在，跳过重构（force 可覆盖）" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 只有确认要推(未跳过)时才登录账号——推送才用账号
+      - name: 登录 Docker Hub（仅推送用）
+        if: steps.check.outputs.skip != '1'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-qemu-action@v3
+        if: steps.check.outputs.skip != '1'
+      - uses: docker/setup-buildx-action@v3
+        if: steps.check.outputs.skip != '1'
+
+      - name: 构建并推送（多架构 manifest）
+        if: steps.check.outputs.skip != '1'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ steps.resolve.outputs.plat }}
+          build-args: |
+            RUSTDESK_VER=${{ steps.resolve.outputs.ver }}
+          labels: |
+            rustdesk.source.image=rustdesk/rustdesk-server-pro-s6:${{ steps.resolve.outputs.ver }}
+            rustdesk.source.digest=${{ steps.resolve.outputs.dig }}
+          tags: ${{ steps.resolve.outputs.tags }}
+          push: true
+          provenance: false
+          sbom: false
+
+      - name: 摘要
+        if: steps.check.outputs.skip != '1'
+        run: |
+          echo "### ✅ 已推送 ${{ steps.resolve.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 架构：${{ steps.resolve.outputs.plat }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 源：rustdesk/rustdesk-server-pro-s6:${{ steps.resolve.outputs.ver }}（原版）" >> "$GITHUB_STEP_SUMMARY"
+          echo "- source index-digest：\`${{ steps.resolve.outputs.dig }}\`" >> "$GITHUB_STEP_SUMMARY"

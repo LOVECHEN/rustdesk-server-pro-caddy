@@ -1,0 +1,120 @@
+name: extract-official-bins
+
+# 从官方镜像提取【各架构原版】hbbs/hbbr/rustdesk-utils，打包发到 GitHub Release。
+#   · 传 latest 会先解析成具体数字版本(比对 index digest)，Release 一律用具体版本 bins-<ver>
+#   · 若我们已有该版本的 Release 且 index digest 一致 → 直接跳过，不重抠(幂等)
+#   · Release 里详记 index digest + 各架构 image digest + 每个二进制 sha256
+on:
+  schedule:
+    - cron: '37 */4 * * *'    # 每 4 小时查一次官方新版本；无变化则幂等跳过(公开 repo 免费)
+  workflow_dispatch:
+    inputs:
+      rustdesk_ver:
+        description: '官方版本 tag（latest 或如 1.8.5；latest 会解析成具体版本）'
+        required: false
+        default: 'latest'
+      arches:
+        description: '架构列表（空格分隔）'
+        required: false
+        default: 'amd64 arm64 arm/v7'
+      force:
+        description: '即使已有且 digest 一致也强制重抠'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 本 workflow 不推 Docker Hub（只发 GitHub Release），全程匿名读官方公开镜像，不用账号
+      - name: 解析版本（latest → 具体版本 + index digest，匿名）
+        id: resolve
+        run: |
+          chmod +x scripts/pull-official-bins.sh
+          OUT=$(./scripts/pull-official-bins.sh -v "${{ github.event.inputs.rustdesk_ver || 'latest' }}" --resolve-only 2>/dev/null | tail -1)
+          VER=$(echo "$OUT" | awk '{print $1}')
+          DIG=$(echo "$OUT" | awk '{print $2}')
+          [ -z "$VER" ] && { echo "解析失败"; exit 1; }
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "dig=$DIG" >> "$GITHUB_OUTPUT"
+          echo "解析结果：$VER  index=$DIG"
+
+      - name: 幂等检查（我们的 Release 已有且 index digest 一致 → 跳过）
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER='${{ steps.resolve.outputs.ver }}'
+          DIG='${{ steps.resolve.outputs.dig }}'
+          TAG="bins-$VER"
+          existing=$(gh release view "$TAG" --json body -q .body 2>/dev/null | grep -oE 'index-digest: sha256:[0-9a-f]{64}' | head -1 | awk '{print $2}' || true)
+          if [ "${{ github.event.inputs.force }}" != "true" ] && [ -n "$existing" ] && [ "$existing" = "$DIG" ]; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "### ⏭️ 已存在 \`$TAG\` 且 index digest 一致，跳过重抠" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`$DIG\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+            if [ -n "$existing" ]; then echo "已有 $TAG 但 digest 变化（$existing → $DIG），重抠"; else echo "$TAG 不存在，开抠"; fi
+          fi
+
+      - name: 提取各架构原版二进制（匿名读官方公开镜像）
+        if: steps.check.outputs.skip != '1'
+        run: |
+          ./scripts/pull-official-bins.sh \
+            -v "${{ steps.resolve.outputs.ver }}" \
+            -a "${{ github.event.inputs.arches || 'amd64 arm64 arm/v7' }}" \
+            -o official-bins
+
+      - name: 按架构打包
+        if: steps.check.outputs.skip != '1'
+        run: |
+          VER='${{ steps.resolve.outputs.ver }}'
+          SRC="official-bins/$VER"
+          mkdir -p dist
+          cp "$SRC/MANIFEST.txt" "$SRC/INDEX_DIGEST" dist/
+          for d in "$SRC"/linux-*; do
+            [ -d "$d" ] || continue
+            arch="$(basename "$d")"
+            tar -czf "dist/rustdesk-bins-${VER}-${arch}.tar.gz" -C "$d" hbbs hbbr rustdesk-utils
+          done
+          # Web 控制台静态资源(平台无关,一份;解到 /usr/share/rustdesk-server)
+          if [ -d "$SRC/web/usr" ]; then
+            tar -czf "dist/rustdesk-server-web-${VER}.tar.gz" -C "$SRC/web" usr
+          fi
+          ls -la dist
+
+      - name: 建 / 更新 Release（具体版本 tag + 完整 digest 溯源）
+        if: steps.check.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER='${{ steps.resolve.outputs.ver }}'
+          DIG='${{ steps.resolve.outputs.dig }}'
+          WANT='${{ github.event.inputs.rustdesk_ver || 'latest' }}'
+          TAG="bins-$VER"
+          NOTES="$(mktemp)"
+          {
+            echo "官方 \`rustdesk/rustdesk-server-pro-s6:$VER\` 各架构【原版】二进制（hbbs / hbbr / rustdesk-utils）+ Web 控制台静态资源。"
+            [ "$WANT" = "latest" ] && echo "> 发布时 \`latest\` = \`$VER\`。"
+            echo
+            echo "index-digest: $DIG"
+            echo
+            echo "- \`rustdesk-bins-$VER-linux-<arch>.tar.gz\`：该架构的 hbbs/hbbr/rustdesk-utils（解压即用）。"
+            echo "- \`rustdesk-server-web-$VER.tar.gz\`：Web 控制台静态资源（各架构通用，\`tar xzf -C /\` 解到 \`/usr/share/rustdesk-server\`；单独部署 hbbs 时控制台需要它，否则 :21114 打开 404）。"
+            echo
+            echo "各架构 image digest、每个二进制 sha256、web 资源 content-sha256 见下方 \`MANIFEST.txt\`："
+            echo
+            echo '```'
+            cat "official-bins/$VER/MANIFEST.txt"
+            echo '```'
+          } > "$NOTES"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" dist/* --title "官方原版二进制 $VER" --notes-file "$NOTES"
+          echo "### ✅ Release \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- index-digest: \`$DIG\`" >> "$GITHUB_STEP_SUMMARY"
+          ls -1 dist | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"

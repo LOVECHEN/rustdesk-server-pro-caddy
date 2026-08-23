@@ -1,0 +1,28 @@
+# 一体机 all —— command=all（= hbbs hbbr caddy）→ 多程序，s6 监管、互相自愈。
+#   最常用：信令+中继+HTTPS 反代全在一个容器。等价仓库根目录的 docker-compose.yml。
+services:
+  rustdesk-server:
+    container_name: rustdesk-server
+    hostname: rustdesk-server
+    image: lovechen/rustdesk-server-pro-caddy:latest
+    command: ["all"]
+    volumes:
+      - ./data:/data       # db、id_ed25519 密钥、caddy 证书(/data/caddy)都在这
+    ports:
+      - "21114:21114"      # Web 控制台(Pro)
+      - "21115:21115"      # NAT type test
+      - "21116:21116"      # TCP 打洞/连接
+      - "21116:21116/udp"  # ID 注册/心跳
+      - "21117:21117"      # 中继(hbbr)
+      - "21120:21120"      # ★ Caddy HTTPS 反代 → Web 控制台
+      # - "21118:21118"    # Web client(hbbs)
+      # - "21119:21119"    # Web client(hbbr)
+    environment:
+      - CADDY_DOMAIN=rd.example.com   # 换成你的域名或真公网IP → 走 ACME 真证书。设为空(=CADDY_DOMAIN=)或整行注释掉 = 内网 IP 自签(直接可用)
+      # - CADDY_ACME=0       # 强制只自签
+      # - CADDY_PROBE=1      # 主动探测对外公网IP并申证书(仅限确认可回连的 NAT 公网机;代理/NAT 后会探到错的出口IP)
+      # - KEY_PUB=<id_ed25519.pub>    # 固定公钥(不给则首启自动生成)
+      # - KEY_PRIV=<id_ed25519 私钥>  # 固定私钥(与公钥成对)
+      # - RELAY=1.2.3.4               # 中继地址(逗号分隔)
+      # - ENCRYPTED_ONLY=1            # 只收加密连接
+    restart: unless-stopped

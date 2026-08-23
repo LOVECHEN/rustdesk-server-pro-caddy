@@ -70,7 +70,7 @@ services:
       - "21120:21120"                # 内嵌 Caddy HTTPS 反代
     environment:
       # ── 内嵌 Caddy：HTTPS 反代证书自动决策 ──────────────────────────────
-      CADDY_DOMAIN: "rd.example.com"        # 改成你的域名 → 域名 ACME 真证书；留空 "" → 自动 公网IP ACME / 内网自签
+      CADDY_DOMAIN: ""                      # 留空(=不写域名，默认) → 自动 公网IP ACME / 内网自签；填你的域名(如 rd.example.com) → 域名 ACME 真证书
       CADDY_ACME: "1"                       # 0=强制只自签(不走 ACME)
       CADDY_NOPROBE: "0"                    # 1=关闭「对外公网 IP 探测」(无域名时默认会探一次)
       # ── ed25519 密钥：留空则首启自动生成到 /data/id_ed25519*；分体部署两端必须一致 ──

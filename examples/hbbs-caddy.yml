@@ -15,6 +15,6 @@ services:
       - "21116:21116/udp"
       - "21120:21120"      # ★ Caddy HTTPS 反代 → Web 控制台
     environment:
-      - CADDY_DOMAIN=rd.example.com   # 有域名填这里 → 自动 ACME 真证书；不填=自动内网/公网IP 决策
+      - CADDY_DOMAIN=                 # 留空=不写域名→自动内网/公网IP 决策；填域名(如 rd.example.com)→ 域名 ACME 真证书
       # - RELAY=1.2.3.4               # 中继地址(指向你的 hbbr 机器)
     restart: unless-stopped

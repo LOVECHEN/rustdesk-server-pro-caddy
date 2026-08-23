@@ -48,7 +48,7 @@ docker run -d --name rustdesk --restart unless-stopped \
 
 ## 完整 docker-compose.yml（列出全部环境变量）
 
-下面列出**全部支持的环境变量**——只有 `CADDY_DOMAIN` 是启用的（招牌项），其余都**注释掉了**（给的是默认值，设成默认值没意义、还可能盖掉控制台里的配置）。把 `CADDY_DOMAIN` 换成你的域名即可跑；要调哪项就取消对应注释：
+下面列出**全部支持的环境变量**——默认**整段都注释掉**（直接跑就行：无域名→自动 公网IP ACME / 内网自签，其余全用默认值）。要用哪项就取消注释哪项（给默认值没意义、还可能盖掉控制台里的配置）：
 
 ```yaml
 services:
@@ -68,11 +68,12 @@ services:
       - "21118:21118"                # Web client(hbbs)
       - "21119:21119"                # Web client(hbbr)
       - "21120:21120"                # 内嵌 Caddy HTTPS 反代
-    environment:
-      # 约定：只有 CADDY_DOMAIN 是 active(招牌项)；其余全部注释=用默认值，要改哪个就取消注释哪个。
-      # 下面 hbbs 的各项 Pro 设置更建议在 web 控制台「设置」页配——走 env 会在每次启动种进设置库、可能盖掉你在控制台改的。
+    # 全部可选：默认整段注释掉——直接跑就是「无域名→自动 公网IP ACME/内网自签」+ 各设置用默认值。
+    # 要用就把 environment: 连同你要的项一起取消注释。hbbs 的 Pro 设置更建议在 web 控制台「设置」页配——
+    # 走 env 会在每次启动种进设置库、可能盖掉你在控制台改的。
+    # environment:
       # ── 内嵌 Caddy HTTPS 反代证书 ────────────────────────────────────────
-      CADDY_DOMAIN: "rd.example.com"          # 换成你的域名 → 域名 ACME 真证书。设为 "" 或整行注释掉(两者等价)= 不写域名 → 自动 公网IP ACME / 内网自签
+      # CADDY_DOMAIN: "rd.example.com"        # 有域名就取消注释并填你的域名 → 域名 ACME 真证书。不设(注释掉 / 设 "" 等价)= 不写域名 → 自动 公网IP ACME / 内网自签
       # CADDY_ACME: "0"                       # 强制只自签(不走 ACME)
       # CADDY_NOPROBE: "1"                    # 关闭「对外公网 IP 探测」
       # ── ed25519 密钥：不写=首启自动生成到 /data/id_ed25519*；要固定/分体部署两端一致才填 ──
@@ -109,7 +110,7 @@ services:
     restart: unless-stopped
 ```
 
-> 只想跑起来：把 `CADDY_DOMAIN` 改成你的域名（或留空走自动决策），其余整段 `environment:` 都可删——全用默认值。分体/单程序部署把 `command` 换成 `hbbs` / `hbbr` 等，见 `examples/`。
+> 直接 `docker compose up -d` 就能跑（无域名→自动证书决策、各项默认值）。想给控制台上域名真证书：取消注释 `environment:` 与 `CADDY_DOMAIN` 并填你的域名。分体/单程序部署把 `command` 换成 `hbbs` / `hbbr` 等，见 `examples/`。
 
 ---
 

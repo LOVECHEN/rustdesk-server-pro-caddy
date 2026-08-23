@@ -69,6 +69,9 @@ RUN set -eux; S=/rootfs/etc/s6-overlay/s6-rc.d; \
 # ── 多模式 entrypoint：command 选 hbbs/hbbr/caddy/all；单程序直 exec 无 s6，多程序上 s6 ──
 COPY --chmod=755 entry /rootfs/entry
 
+# ── Web 控制台静态资源(hbbs 从磁盘服务 /static → /usr/share/rustdesk-server/static)──
+COPY --from=pro /usr/share/rustdesk-server /rootfs/usr/share/rustdesk-server
+
 FROM scratch
 LABEL org.opencontainers.image.authors="LOVE" \
       maintainer="LOVE" \

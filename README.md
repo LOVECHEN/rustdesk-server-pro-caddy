@@ -69,15 +69,17 @@ services:
       - "21119:21119"                # Web client(hbbr)
       - "21120:21120"                # 内嵌 Caddy HTTPS 反代
     environment:
-      # ── 内嵌 Caddy：HTTPS 反代证书自动决策 ──────────────────────────────
-      CADDY_DOMAIN: ""                      # 留空(=不写域名，默认) → 自动 公网IP ACME / 内网自签；填你的域名(如 rd.example.com) → 域名 ACME 真证书
-      CADDY_ACME: "1"                       # 0=强制只自签(不走 ACME)
-      CADDY_NOPROBE: "0"                    # 1=关闭「对外公网 IP 探测」(无域名时默认会探一次)
-      # ── ed25519 密钥：留空则首启自动生成到 /data/id_ed25519*；分体部署两端必须一致 ──
-      KEY_PUB: ""                           # 固定公钥内容(id_ed25519.pub)
-      KEY_PRIV: ""                          # 固定私钥内容(id_ed25519)，须与公钥成对
+      # 约定：注释掉的 = 可选/按需填(不写走默认)；未注释的 = 默认值，按需改。
+      # ── 内嵌 Caddy HTTPS 反代证书 ────────────────────────────────────────
+      CADDY_DOMAIN: "rd.example.com"        # 换成你的域名 → 域名 ACME 真证书。设为 "" 或整行注释掉(两者等价)= 不写域名 → 自动 公网IP ACME / 内网自签
+      # CADDY_ACME: "0"                     # 强制只自签(不走 ACME)
+      # CADDY_NOPROBE: "1"                  # 关闭「对外公网 IP 探测」
+      # ── ed25519 密钥：不写=首启自动生成到 /data/id_ed25519*；要固定/分体部署两端一致才填 ──
+      # KEY_PUB: "<id_ed25519.pub 内容>"
+      # KEY_PRIV: "<id_ed25519 私钥内容>"
+      # ── 中继地址(可选)：不写=用本机 hbbr ──
+      # RELAY: "1.2.3.4,relay2.example.com"  # 逗号分隔
       # ── 中继 / 日志 / 加密 ──────────────────────────────────────────────
-      RELAY: ""                             # 中继地址,逗号分隔,如 "1.2.3.4,relay2.example.com"
       ALWAYS_USE_RELAY: "N"                 # Y=禁直连、强制走中继
       ENCRYPTED_ONLY: "0"                   # 1=只收加密连接
       RUST_LOG: "info"                      # error / warn / info / debug / trace
@@ -89,7 +91,7 @@ services:
       ONLY_ADMIN_ACCESS_UNASSIGNED: "N"     # 只有管理员能访问未分配设备
       ALLOW_NON_ADMIN_SEE_OTHER_GROUP: "N"  # 非管理员可看其他组
       ONLY_ADMIN_ACCESS_LOGS: "N"           # 只有管理员能看日志
-      IDP_ALLOW_LOCAL_PASSWORD_LOGIN: "Y"   # N=只走 OIDC(忘密码会翻车)；Y=允许本地用户名密码登录
+      IDP_ALLOW_LOCAL_PASSWORD_LOGIN: "N"   # 仅在配了 OIDC 时才生效：Y=OIDC 之外仍可本地密码登录, N=只走 OIDC。未配 OIDC 时本地登录照常、与此项无关
       SYNC_DEVICE_NAME_WITH_HOSTNAME: "N"   # 设备名同步为 hostname
       DISABLE_READ_ACCESSIBLE: "N"          # 禁止「读取可访问设备」
       NEW_USER_ENFORCE_TFA: "N"             # 新用户强制两步验证

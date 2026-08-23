@@ -46,6 +46,71 @@ docker run -d --name rustdesk --restart unless-stopped \
 
 ---
 
+## 完整 docker-compose.yml（列出全部环境变量）
+
+下面是一份**不省略任何 env**的完整参考。除 `CADDY_DOMAIN` / 密钥 / `RELAY` 需按你的情况改，其余给的都是**默认值**（设不设效果一样），照抄即可跑，按需删改：
+
+```yaml
+services:
+  rustdesk-server:
+    container_name: rustdesk-server
+    hostname: rustdesk-server
+    image: lovechen/rustdesk-server-pro-caddy:latest
+    command: ["all"]                 # all=hbbs+hbbr+caddy；也可 "hbbs" / "hbbr" / "hbbs hbbr" / "hbbs caddy"
+    volumes:
+      - ./data:/data                 # db、id_ed25519 密钥、caddy 证书(/data/caddy) 都在这
+    ports:
+      - "21114:21114"                # Web 控制台(Pro)
+      - "21115:21115"                # NAT type test
+      - "21116:21116"                # TCP 打洞/连接
+      - "21116:21116/udp"            # ID 注册/心跳
+      - "21117:21117"                # 中继(hbbr)
+      - "21118:21118"                # Web client(hbbs)
+      - "21119:21119"                # Web client(hbbr)
+      - "21120:21120"                # 内嵌 Caddy HTTPS 反代
+    environment:
+      # ── 内嵌 Caddy：HTTPS 反代证书自动决策 ──────────────────────────────
+      CADDY_DOMAIN: "rd.example.com"        # 改成你的域名 → 域名 ACME 真证书；留空 "" → 自动 公网IP ACME / 内网自签
+      CADDY_ACME: "1"                       # 0=强制只自签(不走 ACME)
+      CADDY_NOPROBE: "0"                    # 1=关闭「对外公网 IP 探测」(无域名时默认会探一次)
+      # ── ed25519 密钥：留空则首启自动生成到 /data/id_ed25519*；分体部署两端必须一致 ──
+      KEY_PUB: ""                           # 固定公钥内容(id_ed25519.pub)
+      KEY_PRIV: ""                          # 固定私钥内容(id_ed25519)，须与公钥成对
+      # ── 中继 / 日志 / 加密 ──────────────────────────────────────────────
+      RELAY: ""                             # 中继地址,逗号分隔,如 "1.2.3.4,relay2.example.com"
+      ALWAYS_USE_RELAY: "N"                 # Y=禁直连、强制走中继
+      ENCRYPTED_ONLY: "0"                   # 1=只收加密连接
+      RUST_LOG: "info"                      # error / warn / info / debug / trace
+      # ── 访问 & 设备控制(Pro；也可在 web 控制台「设置」页配) ──────────────
+      ADMIN_NAME: "admin"                   # 默认管理员用户名
+      ACCESS_REQUIRE_LOGIN: "Y"             # 访问需登录
+      ID_CHANGE_SUPPORT: "Y"                # 允许客户端改 ID
+      DISABLE_NEW_DEVICE: "N"               # 禁止新设备注册
+      ONLY_ADMIN_ACCESS_UNASSIGNED: "N"     # 只有管理员能访问未分配设备
+      ALLOW_NON_ADMIN_SEE_OTHER_GROUP: "N"  # 非管理员可看其他组
+      ONLY_ADMIN_ACCESS_LOGS: "N"           # 只有管理员能看日志
+      IDP_ALLOW_LOCAL_PASSWORD_LOGIN: "Y"   # N=只走 OIDC(忘密码会翻车)；Y=允许本地用户名密码登录
+      SYNC_DEVICE_NAME_WITH_HOSTNAME: "N"   # 设备名同步为 hostname
+      DISABLE_READ_ACCESSIBLE: "N"          # 禁止「读取可访问设备」
+      NEW_USER_ENFORCE_TFA: "N"             # 新用户强制两步验证
+      AUDIT_RETENTION_DAYS: "180"           # 审计日志保留天数
+      # ── 安全 / 限流 ─────────────────────────────────────────────────────
+      ENABLE_IP_BLOCKER: "N"                # 启用 IP 封禁
+      ENABLE_API_ARMOR: "N"                 # API 防护
+      MAX_TCP_PER_MIN: "4294967295"         # 每分钟最大 TCP 连接(默认不限)
+      MAX_UDP_PER_MIN: "4294967295"         # 每分钟最大 UDP 连接(默认不限)
+      IP_DOS_TCP: "0"                       # 单 IP TCP DoS 阈值(0=不限)
+      IP_DOS_UDP: "0"                       # 单 IP UDP DoS 阈值(0=不限)
+      GEOIP_FILE: "/data/GeoLite2-City.mmdb"  # GeoIP 库路径(就近中继/地理定位；不放该文件则忽略)
+      # ── 会话 ────────────────────────────────────────────────────────────
+      SESSION_EXPIRE_SINCE_LOGIN: "31536000"  # 登录会话有效期(秒)
+    restart: unless-stopped
+```
+
+> 只想跑起来：把 `CADDY_DOMAIN` 改成你的域名（或留空走自动决策），其余整段 `environment:` 都可删——全用默认值。分体/单程序部署把 `command` 换成 `hbbs` / `hbbr` 等，见 `examples/`。
+
+---
+
 ## Caddy 证书策略（内嵌，监听 `:21120` → 反代控制台 `:21114`）
 
 按优先级**自动决策**：
@@ -88,27 +153,10 @@ ACME 签不下来一律**回落内部自签兜底**，保证 `:21120` 始终能�
 
 ---
 
-## 构建 / CI
+## 镜像 tag
 
-两个 workflow 都做了**版本解析 + digest 溯源 + 幂等**：
+- `latest` — 滚动，始终指向最新版本。
+- `1.8.5`（等具体数字）— 锁定不变，对应官方同版本原版二进制。
 
-- **`build-image`**（`.github/workflows/image.yml`）：多架构构建并推送到 Docker Hub。需在仓库 Secrets 配 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`。传 `latest` 会先解析成具体版本(比对官方 index digest)，镜像同时打 `:latest` 和 `:<具体版本>`，并带 `rustdesk.source.digest` label 溯源；`:<具体版本>` 已存在则跳过（`force` 可覆盖）。
-- **`extract-official-bins`**（`.github/workflows/extract.yml`）：从官方镜像提取各架构**原版** hbbs/hbbr/rustdesk-utils，发到 GitHub Release `bins-<具体版本>`。Release 里详记 **index digest + 各架构 image digest + 每个二进制 sha256**（见 `MANIFEST.txt`）；若已有该版本 Release 且 index digest 一致则跳过重抠。
-
-**版本解析**：`latest` 是多架构 manifest list，其 index digest 与某个数字 tag 相同即代表二者整包一致——workflow 据此把 `latest` 落到具体版本(如 `1.8.5`)，产物一律用具体版本、不留会被覆盖的移动靶。
-
-本地提取二进制（`latest` 同样会解析成具体版本）：
-
-```bash
-./scripts/pull-official-bins.sh -v latest -o official-bins
-# 只解析不抠： ./scripts/pull-official-bins.sh -v latest --resolve-only   # 打印「<版本> <index-digest>」
-```
-
-（crane 跑在 Docker 里，本机不装任何工具链。CI 里传 `DOCKER_CFG=$HOME/.docker` 让 crane 用登录态、避免匿名限流。）
-
-本地构建镜像：
-
-```bash
-docker buildx build --platform linux/amd64 -t rustdesk-server-pro-caddy .
-# 指定官方版本： --build-arg RUSTDESK_VER=1.8.5
-```
+架构 `amd64` / `arm64` / `armv7`，`docker pull` 按你的平台自动选。各模式 compose 示例见源码仓库 `examples/`：
+https://github.com/LOVECHEN/rustdesk-server-pro-caddy

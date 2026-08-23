@@ -48,7 +48,7 @@ docker run -d --name rustdesk --restart unless-stopped \
 
 ## 完整 docker-compose.yml（列出全部环境变量）
 
-下面是一份**不省略任何 env**的完整参考。除 `CADDY_DOMAIN` / 密钥 / `RELAY` 需按你的情况改，其余给的都是**默认值**（设不设效果一样），照抄即可跑，按需删改：
+下面列出**全部支持的环境变量**——只有 `CADDY_DOMAIN` 是启用的（招牌项），其余都**注释掉了**（给的是默认值，设成默认值没意义、还可能盖掉控制台里的配置）。把 `CADDY_DOMAIN` 换成你的域名即可跑；要调哪项就取消对应注释：
 
 ```yaml
 services:
@@ -69,43 +69,43 @@ services:
       - "21119:21119"                # Web client(hbbr)
       - "21120:21120"                # 内嵌 Caddy HTTPS 反代
     environment:
-      # 约定：注释掉的 = 可选/按需填(不写走默认)；未注释的 = 默认值，按需改。
+      # 约定：只有 CADDY_DOMAIN 是 active(招牌项)；其余全部注释=用默认值，要改哪个就取消注释哪个。
+      # 下面 hbbs 的各项 Pro 设置更建议在 web 控制台「设置」页配——走 env 会在每次启动种进设置库、可能盖掉你在控制台改的。
       # ── 内嵌 Caddy HTTPS 反代证书 ────────────────────────────────────────
-      CADDY_DOMAIN: "rd.example.com"        # 换成你的域名 → 域名 ACME 真证书。设为 "" 或整行注释掉(两者等价)= 不写域名 → 自动 公网IP ACME / 内网自签
-      # CADDY_ACME: "0"                     # 强制只自签(不走 ACME)
-      # CADDY_NOPROBE: "1"                  # 关闭「对外公网 IP 探测」
+      CADDY_DOMAIN: "rd.example.com"          # 换成你的域名 → 域名 ACME 真证书。设为 "" 或整行注释掉(两者等价)= 不写域名 → 自动 公网IP ACME / 内网自签
+      # CADDY_ACME: "0"                       # 强制只自签(不走 ACME)
+      # CADDY_NOPROBE: "1"                    # 关闭「对外公网 IP 探测」
       # ── ed25519 密钥：不写=首启自动生成到 /data/id_ed25519*；要固定/分体部署两端一致才填 ──
       # KEY_PUB: "<id_ed25519.pub 内容>"
       # KEY_PRIV: "<id_ed25519 私钥内容>"
-      # ── 中继地址(可选)：不写=用本机 hbbr ──
-      # RELAY: "1.2.3.4,relay2.example.com"  # 逗号分隔
-      # ── 中继 / 日志 / 加密 ──────────────────────────────────────────────
-      ALWAYS_USE_RELAY: "N"                 # Y=禁直连、强制走中继
-      ENCRYPTED_ONLY: "0"                   # 1=只收加密连接
-      RUST_LOG: "info"                      # error / warn / info / debug / trace
-      # ── 访问 & 设备控制(Pro；也可在 web 控制台「设置」页配) ──────────────
-      ADMIN_NAME: "admin"                   # 默认管理员用户名
-      ACCESS_REQUIRE_LOGIN: "Y"             # 访问需登录
-      ID_CHANGE_SUPPORT: "Y"                # 允许客户端改 ID
-      DISABLE_NEW_DEVICE: "N"               # 禁止新设备注册
-      ONLY_ADMIN_ACCESS_UNASSIGNED: "N"     # 只有管理员能访问未分配设备
-      ALLOW_NON_ADMIN_SEE_OTHER_GROUP: "N"  # 非管理员可看其他组
-      ONLY_ADMIN_ACCESS_LOGS: "N"           # 只有管理员能看日志
-      IDP_ALLOW_LOCAL_PASSWORD_LOGIN: "N"   # 仅在配了 OIDC 时才生效：Y=OIDC 之外仍可本地密码登录, N=只走 OIDC。未配 OIDC 时本地登录照常、与此项无关
-      SYNC_DEVICE_NAME_WITH_HOSTNAME: "N"   # 设备名同步为 hostname
-      DISABLE_READ_ACCESSIBLE: "N"          # 禁止「读取可访问设备」
-      NEW_USER_ENFORCE_TFA: "N"             # 新用户强制两步验证
-      AUDIT_RETENTION_DAYS: "180"           # 审计日志保留天数
-      # ── 安全 / 限流 ─────────────────────────────────────────────────────
-      ENABLE_IP_BLOCKER: "N"                # 启用 IP 封禁
-      ENABLE_API_ARMOR: "N"                 # API 防护
-      MAX_TCP_PER_MIN: "4294967295"         # 每分钟最大 TCP 连接(默认不限)
-      MAX_UDP_PER_MIN: "4294967295"         # 每分钟最大 UDP 连接(默认不限)
-      IP_DOS_TCP: "0"                       # 单 IP TCP DoS 阈值(0=不限)
-      IP_DOS_UDP: "0"                       # 单 IP UDP DoS 阈值(0=不限)
-      GEOIP_FILE: "/data/GeoLite2-City.mmdb"  # GeoIP 库路径(就近中继/地理定位；不放该文件则忽略)
-      # ── 会话 ────────────────────────────────────────────────────────────
-      SESSION_EXPIRE_SINCE_LOGIN: "31536000"  # 登录会话有效期(秒)
+      # ── 中继 / 日志 / 加密(下面均为默认值) ──
+      # RELAY: "1.2.3.4,relay2.example.com"   # 中继地址,逗号分隔;不写=用本机 hbbr
+      # ALWAYS_USE_RELAY: "N"                 # Y=禁直连、强制走中继
+      # ENCRYPTED_ONLY: "0"                   # 1=只收加密连接
+      # RUST_LOG: "info"                      # error / warn / info / debug / trace
+      # ── 访问 & 设备控制(Pro) ──
+      # ADMIN_NAME: "admin"                   # 默认管理员用户名
+      # ACCESS_REQUIRE_LOGIN: "Y"             # 访问需登录
+      # ID_CHANGE_SUPPORT: "Y"                # 允许客户端改 ID
+      # DISABLE_NEW_DEVICE: "N"               # 禁止新设备注册
+      # ONLY_ADMIN_ACCESS_UNASSIGNED: "N"     # 只有管理员能访问未分配设备
+      # ALLOW_NON_ADMIN_SEE_OTHER_GROUP: "N"  # 非管理员可看其他组
+      # ONLY_ADMIN_ACCESS_LOGS: "N"           # 只有管理员能看日志
+      # IDP_ALLOW_LOCAL_PASSWORD_LOGIN: "N"   # 仅在配了 OIDC 时才生效：Y=OIDC 之外仍可本地密码登录, N=只走 OIDC。未配 OIDC 时本地登录照常、与此项无关
+      # SYNC_DEVICE_NAME_WITH_HOSTNAME: "N"   # 设备名同步为 hostname
+      # DISABLE_READ_ACCESSIBLE: "N"          # 禁止「读取可访问设备」
+      # NEW_USER_ENFORCE_TFA: "N"             # 新用户强制两步验证
+      # AUDIT_RETENTION_DAYS: "180"           # 审计日志保留天数
+      # ── 安全 / 限流 ──
+      # ENABLE_IP_BLOCKER: "N"                # 启用 IP 封禁
+      # ENABLE_API_ARMOR: "N"                 # API 防护
+      # MAX_TCP_PER_MIN: "4294967295"         # 每分钟最大 TCP 连接(默认不限)
+      # MAX_UDP_PER_MIN: "4294967295"         # 每分钟最大 UDP 连接(默认不限)
+      # IP_DOS_TCP: "0"                       # 单 IP TCP DoS 阈值(0=不限)
+      # IP_DOS_UDP: "0"                       # 单 IP UDP DoS 阈值(0=不限)
+      # GEOIP_FILE: "/data/GeoLite2-City.mmdb"  # GeoIP 库路径(就近中继/地理定位；不放该文件则忽略)
+      # ── 会话 ──
+      # SESSION_EXPIRE_SINCE_LOGIN: "31536000"  # 登录会话有效期(秒)
     restart: unless-stopped
 ```
 
